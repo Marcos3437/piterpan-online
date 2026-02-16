@@ -414,8 +414,71 @@ function loop() {
     update(); 
     draw(); 
     requestAnimationFrame(loop); 
+    // --- LÓGICA DE CONEXIÓN MULTIJUGADOR (SALA ÚNICA) ---
+    // Cambia el link por el tuyo de Render. Asegúrate de que NO tenga // delante.
+    const socket = io("https://tu-proyecto.onrender.com"); 
+
+    const otrosJugadores = {}; // Diccionario para los demás PiterPans
+
+    // 1. Recibir a los que ya están en la plaza
+    socket.on('currentPlayers', (players) => {
+        Object.keys(players).forEach((id) => {
+            if (id !== socket.id) {
+                otrosJugadores[id] = players[id];
+            }
+        });
+    });
+
+    // 2. Escuchar cuando alguien nuevo entra a la sala
+    socket.on('newPlayer', (playerInfo) => {
+        otrosJugadores[playerInfo.id] = playerInfo;
+    });
+
+    // 3. Cuando alguien se mueve, actualizamos su posición en nuestra lista
+    socket.on('playerMoved', (playerInfo) => {
+        if (otrosJugadores[playerInfo.id]) {
+            otrosJugadores[playerInfo.id].x = playerInfo.x;
+            otrosJugadores[playerInfo.id].y = playerInfo.y;
+        }
+    });
+
+    // 4. Si alguien se pira, lo borramos
+    socket.on('playerDisconnected', (playerId) => {
+        delete otrosJugadores[playerId];
+    });
+
+    // 5. Función para que el servidor sepa dónde estamos nosotros
+    // Ponemos esto para que se ejecute constantemente
+    setInterval(() => {
+        if (socket.connected) {
+            socket.emit('playerMovement', {
+                x: player.x, // Asegúrate de que tu muñeco se llame 'player'
+                y: player.y,
+                name: "PiterPan_Online"
+            });
+        }
+    }, 50); // Enviamos nuestra posición cada 50ms
+
+    // 6. DIBUJAR A LOS DEMÁS (Añadido al final del dibujo)
+    // Esta parte hace que los otros sean visibles
+    const originalDraw = loop; 
+    loop = function() {
+        originalDraw(); // Ejecuta tu juego normal
+        
+        // Y ahora dibuja a los otros encima
+        Object.keys(otrosJugadores).forEach((id) => {
+            const p = otrosJugadores[id];
+            // Aquí usamos el contexto de tu canvas (asumo que es 'ctx')
+            // Dibujamos un cuadrado simple para los otros jugadores
+            ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; // Color blanco semi-transparente
+            ctx.fillRect(p.x, p.y, 40, 40); // Ajusta el tamaño al de tu PiterPan
+            ctx.fillStyle = "white";
+            ctx.fillText(p.name, p.x, p.y - 10);
+        });
+    };
 }
 </script>
 </body>
 
 </html>
+
