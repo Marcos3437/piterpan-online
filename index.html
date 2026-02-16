@@ -78,12 +78,37 @@
     <canvas id="game"></canvas>
 
 <script>
-// CONFIGURACIÓN DEL SOCKET (ONLINE REAL)
-// Cuando tengas tu servidor en Render, cambia 'null' por la URL
-let socket = null; 
+// --- CONFIGURACIÓN DE RED (SALA ÚNICA) ---
+let socket = null;
+const otrosJugadores = {};
+
 try {
-     socket = io("https://piterpan-online.onrender.com"); 
-} catch(e) { console.log("Modo Offline/Simulado"); }
+    // CAMBIA ESTE LINK POR EL TUYO DE RENDER
+    socket = io("https://piterpan-online.onrender.com");
+
+    socket.on('currentPlayers', (players) => {
+        Object.keys(players).forEach((id) => {
+            if (id !== socket.id) otrosJugadores[id] = players[id];
+        });
+    });
+
+    socket.on('newPlayer', (info) => {
+        otrosJugadores[info.id] = info;
+    });
+
+    socket.on('playerMoved', (info) => {
+        if (otrosJugadores[info.id]) {
+            otrosJugadores[info.id].x = info.x;
+            otrosJugadores[info.id].y = info.y;
+            otrosJugadores[info.id].nick = info.nick;
+        }
+    });
+
+    socket.on('playerDisconnected', (id) => {
+        delete otrosJugadores[id];
+    });
+
+} catch(e) { console.log("Servidor Offline"); }
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -133,43 +158,26 @@ function updateUI() {
 }
 updateUI();
 
-function addChatMessage(user, msg) {
-    const box = document.getElementById('chat-box');
-    const entry = document.createElement('div');
-    entry.className = "chat-msg";
-    entry.innerHTML = `<span class="chat-user">${user}:</span> ${msg}`;
-    box.appendChild(entry);
-    if(box.childNodes.length > 8) box.removeChild(box.firstChild);
-}
-
 function spawnBot() {
     if(!isLive) return;
-    // Solo spawneamos bots si hay pocos jugadores "reales" (simulado aquí)
     if(entities.length >= 6) return;
-
     const types = ['piraman', 'wachingo', 'explotin'];
     const t = types[Math.floor(Math.random()*3)];
     const ang = Math.random() * Math.PI * 2;
     const dist = 1200 + Math.random() * 500;
-    const newBot = {
+    entities.push({
         id: "bot_" + Math.random(), nick: BOT_NAMES[Math.floor(Math.random()*BOT_NAMES.length)],
         char: t, x: player.x + Math.cos(ang)*dist, y: player.y + Math.sin(ang)*dist,
         hp: CHARS[t].hp, maxHp: CHARS[t].hp, moveAng: 0, aimAng: 0, lastShoot: 0, hurtTime: 0, kills: 0, lastDamageTime: 0
-    };
-    entities.push(newBot);
-    if(Math.random() > 0.85) addChatMessage("SERVER", `${newBot.nick} entró a la sala.`);
+    });
 }
 
 function createExplosion(x, y, ownerId) {
     fxs.push({ x, y, type: 'boom', life: 30 });
-    for(let i=0; i<6; i++) fxs.push({ x: x+(Math.random()-0.5)*80, y: y+(Math.random()-0.5)*80, type: 'fire_ground', life: 120 });
-    
     [player, ...entities].forEach(en => {
         let dist = Math.hypot(x - en.x, y - en.y);
         if(dist < 185 && en.id !== ownerId && en.hp > 0) { 
-            en.hp -= CHARS.explotin.dmg; 
-            en.hurtTime = 10;
-            en.lastDamageTime = Date.now();
+            en.hp -= CHARS.explotin.dmg; en.hurtTime = 10;
             if(ownerId === 'hero') player.hits++;
             checkDead(en, ownerId);
         }
@@ -178,27 +186,17 @@ function createExplosion(x, y, ownerId) {
 
 function checkDead(en, ownerId) {
     if(en.hp <= 0 && !en.dead) {
-        en.hp = 0;
-        en.dead = true;
+        en.hp = 0; en.dead = true;
         let owner = [player, ...entities].find(e => e.id === ownerId);
         if(owner) owner.kills++;
-        
-        if(ownerId === 'hero' && en.id !== 'hero') { 
-            player.coins += 25; 
-            localStorage.setItem('p_coins', player.coins); 
-        }
-        
+        if(ownerId === 'hero' && en.id !== 'hero') { player.coins += 25; localStorage.setItem('p_coins', player.coins); }
         if(en.id === 'hero') {
             document.getElementById('death-screen').style.display = 'flex';
             document.getElementById('death-stats').innerText = `HAS ELIMINADO A ${player.kills} JUGADORES`;
-            // IMPORTANTE: El juego sigue corriendo de fondo (Online feel)
             setTimeout(() => { location.reload(); }, 3500);
         } else {
             let idx = entities.indexOf(en);
-            if(idx !== -1) {
-                addChatMessage("SERVER", `${en.nick} fue desplumado.`);
-                entities.splice(idx, 1);
-            }
+            if(idx !== -1) entities.splice(idx, 1);
         }
     }
 }
@@ -208,7 +206,6 @@ function fire(p, angle) {
     const s = CHARS[p.char]; const now = Date.now();
     if(now - p.lastShoot < s.reload) return;
     p.lastShoot = now;
-
     if(p.char === 'piraman') {
         for(let i=0; i<3; i++) projectiles.push({ owner: p.id, x: p.x, y: p.y, vx: Math.cos(angle+(Math.random()-0.5)*0.2)*18, vy: Math.sin(angle+(Math.random()-0.5)*0.2)*18, life: 30, type: 'fire', color: '#ff4500', size: 8, dmg: s.dmg });
     } else if(p.char === 'wachingo') {
@@ -216,8 +213,6 @@ function fire(p, angle) {
     } else if(p.char === 'explotin') {
         projectiles.push({ owner: p.id, x: p.x, y: p.y, vx: Math.cos(angle)*14, vy: Math.sin(angle)*14, life: 35, type: 'bomb', color: '#333', size: 14 });
     }
-    
-    if(socket && p.id === 'hero') socket.emit('fire', {x: p.x, y: p.y, ang: angle});
 }
 
 function activateSuper() {
@@ -225,14 +220,11 @@ function activateSuper() {
     const now = Date.now();
     const canUse = player.char === 'wachingo' ? (now - player.lastSuperTime >= 5000) : (player.hits >= CHARS[player.char].hitsToUlt);
     if(!canUse) return;
-
     if(player.char === 'wachingo') {
         player.lastSuperTime = now; player.isDashing = true; player.invulnerable = true;
         let dashAng = player.aimAng; let c = 0;
         let inv = setInterval(() => {
             player.x += Math.cos(dashAng)*55; player.y += Math.sin(dashAng)*55;
-            projectiles.push({ owner: player.id, x: player.x, y: player.y, vx: Math.cos(dashAng+Math.PI/2)*1.2, vy: Math.sin(dashAng+Math.PI/2)*1.2, life: 150, type: 'bullet', color: '#fff', size: 5, dmg: 5 });
-            projectiles.push({ owner: player.id, x: player.x, y: player.y, vx: Math.cos(dashAng-Math.PI/2)*1.2, vy: Math.sin(dashAng-Math.PI/2)*1.2, life: 150, type: 'bullet', color: '#fff', size: 5, dmg: 5 });
             fxs.push({ x: player.x, y: player.y, type: 'ghost', life: 10, ang: dashAng });
             c++; if(c > 15 || player.hp <= 0) { player.isDashing = false; player.invulnerable = false; clearInterval(inv); }
         }, 16);
@@ -243,8 +235,7 @@ function activateSuper() {
         } else if(player.char === 'explotin') {
             player.isCasting = true; let c = 0;
             let inv = setInterval(() => {
-                let bx = player.x + (Math.random()-0.5)*600; let by = player.y + (Math.random()-0.5)*600;
-                createExplosion(bx, by, player.id);
+                createExplosion(player.x + (Math.random()-0.5)*600, player.y + (Math.random()-0.5)*600, player.id);
                 c++; if(c > 12 || player.hp <= 0) { player.isCasting = false; clearInterval(inv); }
             }, 100);
         }
@@ -253,23 +244,19 @@ function activateSuper() {
 
 function update() {
     const now = Date.now();
-
     [player, ...entities].forEach(en => {
         if(en.hp > 0 && now - en.lastDamageTime > 3000 && en.hp < en.maxHp) {
-            let regenRate = en.char === 'explotin' ? 0.4 : 0.18;
-            en.hp += regenRate;
+            en.hp += en.char === 'explotin' ? 0.4 : 0.18;
             if(en.hp > en.maxHp) en.hp = en.maxHp;
         }
     });
-
-    document.getElementById('chat-box').style.display = keys['tab'] ? 'block' : 'none';
 
     if(player.hp > 0 && !player.isCasting && !player.isDashing) {
         let mx=0, my=0; if(keys['w']) my--; if(keys['s']) my++; if(keys['a']) mx--; if(keys['d']) mx++;
         if(mx!==0 || my!==0) { 
             player.x += mx*CHARS[player.char].speed; player.y += my*CHARS[player.char].speed; 
             player.moveAng = Math.atan2(my, mx); 
-            if(socket) socket.emit('move', {x: player.x, y: player.y, ang: player.moveAng});
+            if(socket && socket.connected) socket.emit('playerMovement', {x: player.x, y: player.y, nick: player.nick});
         }
     }
     player.aimAng = Math.atan2(mouse.y - H/2, mouse.x - W/2);
@@ -277,19 +264,12 @@ function update() {
 
     projectiles.forEach((p, i) => {
         p.x += p.vx; p.y += p.vy; p.life--;
-        if(p.type === 'fire') fxs.push({ x: p.x, y: p.y, life: 8, color: '#ff6600' });
-        
         [player, ...entities].forEach(en => {
             if(en.hp > 0 && en.id !== p.owner && Math.hypot(p.x-en.x, p.y-en.y) < 45) {
                 if(en.id === 'hero' && player.invulnerable) return;
-                en.lastDamageTime = Date.now();
-                if(p.type === 'bomb') { createExplosion(p.x, p.y, p.owner); projectiles.splice(i, 1); }
-                else {
-                    en.hp -= p.dmg; en.hurtTime = 10;
-                    if(p.owner==='hero') player.hits++;
-                    checkDead(en, p.owner);
-                    if(p.type==='slash') projectiles.splice(i, 1);
-                }
+                en.hp -= p.dmg || 0; en.hurtTime = 10; en.lastDamageTime = now;
+                if(p.owner==='hero') player.hits++;
+                checkDead(en, p.owner);
             }
         });
         if(p.life <= 0) { if(p.type === 'bomb') createExplosion(p.x, p.y, p.owner); projectiles.splice(i, 1); }
@@ -299,24 +279,18 @@ function update() {
 
     entities.forEach((b) => {
         if(b.hp <= 0) return;
-        let targets = [player, ...entities.filter(e => e.id !== b.id && e.hp > 0)];
-        let aliveTargets = targets.filter(t => t.hp > 0);
-        if(aliveTargets.length === 0) return;
-
-        let target = aliveTargets.reduce((prev, curr) => Math.hypot(b.x-curr.x, b.y-curr.y) < Math.hypot(b.x-prev.x, b.y-prev.y) ? curr : prev);
+        let target = player;
         let d = Math.hypot(target.x-b.x, target.y-b.y);
         b.aimAng = Math.atan2(target.y-b.y, target.x-b.x);
-        
         if(d > 220) { b.x += Math.cos(b.aimAng)*3.5; b.y += Math.sin(b.aimAng)*3.5; b.moveAng = b.aimAng; }
         if(d < 500) fire(b, b.aimAng);
         if(b.hurtTime > 0) b.hurtTime--;
     });
     if(player.hurtTime > 0) player.hurtTime--;
 
-    let prog = player.char === 'wachingo' ? Math.min(100, ((Date.now()-player.lastSuperTime)/5000)*100) : (player.hits/CHARS[player.char].hitsToUlt)*100;
-    document.getElementById('hp-fill').style.width = Math.max(0, (player.hp/player.maxHp*100)) + "%";
+    let prog = player.char === 'wachingo' ? Math.min(100, ((now-player.lastSuperTime)/5000)*100) : (player.hits/CHARS[player.char].hitsToUlt)*100;
+    document.getElementById('hp-fill').style.width = (player.hp/player.maxHp*100) + "%";
     document.getElementById('ult-fill').style.width = prog + "%";
-    document.getElementById('coin-hud').innerText = "💰 " + player.coins;
     
     let list = [player, ...entities].sort((a,b) => b.kills - a.kills).slice(0, 5);
     document.getElementById('lb-list').innerHTML = list.map((e, i) => `<div class="lb-entry ${e.id==='hero'?'lb-me':''}"><span>${i+1}. ${e.nick}</span> <span>${e.kills}</span></div>`).join('');
@@ -324,6 +298,9 @@ function update() {
 
 function draw() {
     ctx.fillStyle = '#010103'; ctx.fillRect(0,0,W,H);
+    const cX = W/2-player.x, cY = H/2-player.y;
+
+    // Estrellas y Fondo
     ctx.fillStyle = "white";
     stars.forEach(s => {
         let sx = (s.x - player.x * 0.15) % W; if(sx < 0) sx += W;
@@ -331,63 +308,36 @@ function draw() {
         ctx.fillRect(sx, sy, 2, 2);
     });
 
-    ctx.strokeStyle = "rgba(0, 242, 255, 0.05)";
-    let gridSize = 100; let oX = -player.x % gridSize, oY = -player.y % gridSize;
-    for (let x = oX; x < W; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-    for (let y = oY; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    // Dibujar Otros Jugadores Online (CORREGIDO)
+    Object.keys(otrosJugadores).forEach((id) => {
+        const p = otrosJugadores[id];
+        ctx.fillStyle = "rgba(0, 242, 255, 0.6)";
+        ctx.fillRect(p.x + cX - 20, p.y + cY - 20, 40, 40);
+        ctx.fillStyle = "white";
+        ctx.textAlign = "center";
+        ctx.fillText(p.nick || "Jugador", p.x + cX, p.y + cY - 35);
+    });
 
-    const cX = W/2-player.x, cY = H/2-player.y;
-
-    if(player.isAimingUlt && player.hp > 0) {
-        ctx.save(); ctx.translate(W/2, H/2); ctx.rotate(player.aimAng); ctx.strokeStyle = "cyan"; ctx.setLineDash([10, 5]);
-        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(400, 0); ctx.stroke(); ctx.restore();
-    }
-
+    // Dibujar Proyectiles, FXs y Personajes
     fxs.forEach(f => {
         if(f.type === 'boom') {
             ctx.fillStyle = `rgba(255, 100, 0, ${f.life/30})`;
             ctx.beginPath(); ctx.arc(f.x+cX, f.y+cY, (30-f.life)*9, 0, Math.PI*2); ctx.fill();
-        } else if(f.type === 'fire_ground') {
-            ctx.fillStyle = Math.random() > 0.5 ? "#ff4500" : "#ffae00";
-            ctx.globalAlpha = f.life/120;
-            ctx.beginPath(); ctx.arc(f.x+cX, f.y+cY, 12 + Math.sin(Date.now()*0.01)*6, 0, Math.PI*2); ctx.fill();
-            ctx.globalAlpha = 1;
-        } else {
-            ctx.fillStyle = f.color || "rgba(0, 242, 255, 0.3)";
-            ctx.fillRect(f.x+cX, f.y+cY, 4, 4);
         }
     });
 
     projectiles.forEach(p => {
-        ctx.save(); ctx.translate(p.x+cX, p.y+cY);
-        if(p.type === 'slash') { ctx.rotate(p.ang); ctx.strokeStyle = "white"; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(0, 0, p.size, -Math.PI/4, Math.PI/4); ctx.stroke(); }
-        else { ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(0, 0, p.size, 0, Math.PI*2); ctx.fill(); }
-        ctx.restore();
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x+cX, p.y+cY, p.size, 0, Math.PI*2); ctx.fill();
     });
 
     [player, ...entities].forEach(e => {
         if(e.hp <= 0) return;
         ctx.save(); ctx.translate(e.x+cX, e.y+cY);
         ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.fillText(e.nick, 0, -75);
-        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(-30, -65, 60, 8);
-        ctx.fillStyle = e.hurtTime > 0 ? "white" : (e.id==='hero'?'#00ff88':'#ff3300'); ctx.fillRect(-30, -65, (e.hp/e.maxHp)*60, 8);
-        
         ctx.rotate(e.moveAng);
-        if(e.hurtTime > 0) ctx.translate((Math.random()-0.5)*10, (Math.random()-0.5)*10);
-        
         ctx.fillStyle = e.hurtTime > 0 ? "white" : CHARS[e.char].color;
-        let scale = CHARS[e.char].scale || 1;
-        ctx.scale(scale, scale);
-
-        if(e.char === 'piraman') {
-            ctx.beginPath(); ctx.moveTo(25, 0); ctx.lineTo(-15, -20); ctx.lineTo(-15, 20); ctx.closePath(); ctx.fill();
-        } else if(e.char === 'wachingo') {
-            ctx.fillRect(-18,-18,36,36); ctx.fillStyle = "black"; ctx.fillRect(10, -10, 6, 6); ctx.fillRect(10, 4, 6, 6);
-        } else if(e.char === 'explotin') {
-            let s = 1 + Math.sin(Date.now()*0.015)*0.15; ctx.scale(s, s);
-            ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "#111"; ctx.fillRect(5, -15, 8, 15);
-        }
+        ctx.fillRect(-20, -20, 40, 40);
         ctx.restore();
     });
 }
@@ -395,90 +345,26 @@ function draw() {
 function start() {
     player.nick = document.getElementById('nick').value || "PITER";
     player.hp = CHARS[player.char].hp; player.maxHp = player.hp;
-    player.kills = 0; player.hits = 0; player.dead = false;
     document.getElementById('ui-overlay').style.display = 'none';
     document.getElementById('hud').style.display = 'block';
     document.getElementById('char-name').innerText = player.nick;
     isLive = true; 
-    addChatMessage("SYSTEM", `Conectado al servidor de PiterPan.`);
-    if(socket) socket.emit('join', {nick: player.nick, char: player.char});
     loop();
 }
 
-window.onmousedown = e => { if(!isLive || player.hp <= 0) return; if(e.button===0) fire(player, player.aimAng); if(e.button===2) player.isAimingUlt=true; };
-window.onmouseup = e => { if(e.button===2 && player.isAimingUlt) { player.isAimingUlt=false; activateSuper(); } };
+window.onmousedown = e => { if(!isLive || player.hp <= 0) return; fire(player, player.aimAng); };
 window.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; };
-window.onkeydown = e => { keys[e.key.toLowerCase()] = true; if(e.key === "Tab") e.preventDefault(); };
+window.onkeydown = e => { keys[e.key.toLowerCase()] = true; if(e.key === "e") activateSuper(); };
 window.onkeyup = e => keys[e.key.toLowerCase()] = false;
+
 function loop() { 
     update(); 
     draw(); 
     requestAnimationFrame(loop); 
-    // --- LÓGICA DE CONEXIÓN MULTIJUGADOR (SALA ÚNICA) ---
-    // Cambia el link por el tuyo de Render. Asegúrate de que NO tenga // delante.
-    const socket = io("https://tu-proyecto.onrender.com"); 
-
-    const otrosJugadores = {}; // Diccionario para los demás PiterPans
-
-    // 1. Recibir a los que ya están en la plaza
-    socket.on('currentPlayers', (players) => {
-        Object.keys(players).forEach((id) => {
-            if (id !== socket.id) {
-                otrosJugadores[id] = players[id];
-            }
-        });
-    });
-
-    // 2. Escuchar cuando alguien nuevo entra a la sala
-    socket.on('newPlayer', (playerInfo) => {
-        otrosJugadores[playerInfo.id] = playerInfo;
-    });
-
-    // 3. Cuando alguien se mueve, actualizamos su posición en nuestra lista
-    socket.on('playerMoved', (playerInfo) => {
-        if (otrosJugadores[playerInfo.id]) {
-            otrosJugadores[playerInfo.id].x = playerInfo.x;
-            otrosJugadores[playerInfo.id].y = playerInfo.y;
-        }
-    });
-
-    // 4. Si alguien se pira, lo borramos
-    socket.on('playerDisconnected', (playerId) => {
-        delete otrosJugadores[playerId];
-    });
-
-    // 5. Función para que el servidor sepa dónde estamos nosotros
-    // Ponemos esto para que se ejecute constantemente
-    setInterval(() => {
-        if (socket.connected) {
-            socket.emit('playerMovement', {
-                x: player.x, // Asegúrate de que tu muñeco se llame 'player'
-                y: player.y,
-                name: "PiterPan_Online"
-            });
-        }
-    }, 50); // Enviamos nuestra posición cada 50ms
-
-    // 6. DIBUJAR A LOS DEMÁS (Añadido al final del dibujo)
-    // Esta parte hace que los otros sean visibles
-    const originalDraw = loop; 
-    loop = function() {
-        originalDraw(); // Ejecuta tu juego normal
-        
-        // Y ahora dibuja a los otros encima
-        Object.keys(otrosJugadores).forEach((id) => {
-            const p = otrosJugadores[id];
-            // Aquí usamos el contexto de tu canvas (asumo que es 'ctx')
-            // Dibujamos un cuadrado simple para los otros jugadores
-            ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; // Color blanco semi-transparente
-            ctx.fillRect(p.x, p.y, 40, 40); // Ajusta el tamaño al de tu PiterPan
-            ctx.fillStyle = "white";
-            ctx.fillText(p.name, p.x, p.y - 10);
-        });
-    };
 }
 </script>
 </body>
-
 </html>
+</html>
+
 
