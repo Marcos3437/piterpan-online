@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PITERPAN BRAWL V51 // HYBRID ONLINE</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root { --neon: #00f2ff; --gold: #ffd700; --fire: #ff4500; --bg: #010103; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); font-family: 'Arial Black', sans-serif; color: white; user-select: none; }
+        
+        #ui-overlay { position: absolute; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle, #0a0a1a, #000); }
+        .menu-box { background: rgba(0,0,0,0.95); padding: 50px; border-radius: 30px; border: 2px solid var(--neon); text-align: center; box-shadow: 0 0 50px rgba(0, 242, 255, 0.2); }
+        
+        .char-grid { display: flex; gap: 20px; margin: 30px 0; }
+        .card { width: 130px; padding: 20px; background: #0a0a0a; border: 2px solid #222; border-radius: 20px; cursor: pointer; transition: 0.3s; position: relative; }
+        .card.active { border-color: var(--neon); background: rgba(0, 242, 255, 0.1); box-shadow: 0 0 30px var(--neon); }
+        .card.locked { opacity: 0.6; filter: grayscale(0.8); }
+        .price-tag { position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%); background: var(--gold); color: black; padding: 2px 10px; border-radius: 10px; font-size: 12px; }
+
+        #hud { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 50; }
+        #coin-hud { position: absolute; top: 25px; left: 25px; font-size: 28px; color: var(--gold); }
+        
+        #leaderboard { position: absolute; top: 25px; right: 25px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 15px; border: 1px solid var(--neon); min-width: 180px; }
+        .lb-entry { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 5px; }
+        .lb-me { color: var(--neon); font-weight: bold; }
+
+        #chat-box { position: absolute; bottom: 200px; left: 40px; width: 250px; height: 150px; background: rgba(0,0,0,0.8); border: 1px solid var(--neon); border-radius: 10px; padding: 10px; display: none; overflow-y: hidden; font-family: monospace; font-size: 12px; color: #aaa; pointer-events: none; }
+        .chat-msg { margin-bottom: 4px; }
+        .chat-user { color: var(--neon); }
+
+        .hp-ui { position: absolute; bottom: 40px; left: 40px; width: 300px; }
+        .bar-bg { width: 100%; height: 12px; background: rgba(255,255,255,0.1); margin-top: 10px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
+        #hp-fill { height: 100%; background: linear-gradient(90deg, #00ff88, #0088ff); width: 100%; transition: 0.1s linear; }
+        #ult-fill { height: 100%; background: linear-gradient(90deg, #00f2ff, #0066ff); width: 0%; }
+        
+        #death-screen { display: none; position: absolute; inset: 0; background: rgba(255,0,0,0.3); z-index: 200; align-items: center; justify-content: center; flex-direction: column; backdrop-filter: blur(8px); }
+        
+        canvas { display: block; filter: contrast(1.1); }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <div id="ui-overlay">
+        <div class="menu-box">
+            <h1 style="color:var(--neon); margin:0; letter-spacing: 5px; font-size: 40px;">PITERPAN BRAWL</h1>
+            <p style="color:rgba(255,255,255,0.5)">SUPREME CASINO EDITION</p>
+            <input type="text" id="nick" placeholder="NICKNAME" maxlength="10" style="padding:15px; width:80%; margin:20px 0; background:#000; border:2px solid #333; border-radius: 10px; color:#fff; text-align:center;">
+            
+            <div class="char-grid" id="char-grid">
+                <div class="card active" id="sel-piraman" onclick="selectOrBuy('piraman', 0)"><strong>PIRAMÁN</strong></div>
+                <div class="card locked" id="sel-wachingo" onclick="selectOrBuy('wachingo', 100)"><strong>WACHINGO</strong><div class="price-tag">💰 100</div></div>
+                <div class="card locked" id="sel-explotin" onclick="selectOrBuy('explotin', 250)"><strong>EXPLOTÍN</strong><div class="price-tag">💰 250</div></div>
+            </div>
+            
+            <button onclick="start()" style="padding:18px 50px; background:var(--neon); border:none; font-weight:bold; cursor:pointer; border-radius:15px; font-size: 20px;">ENTRAR AL SERVIDOR</button>
+            <p style="margin-top:20px;">MONEDAS: 💰 <span id="m-coins">0</span></p>
+        </div>
+    </div>
+
+    <div id="death-screen">
+        <h1 style="font-size: 80px; color: white; margin: 0; text-shadow: 0 0 20px red;">HAS MUERTO</h1>
+        <p id="death-stats" style="font-size: 24px; color: white;"></p>
+        <p style="color: rgba(255,255,255,0.8);">Volviendo al Lobby del Casino...</p>
+    </div>
+
+    <div id="hud">
+        <div id="coin-hud">💰 0</div>
+        <div id="leaderboard"><div id="lb-list"></div></div>
+        <div id="chat-box"></div>
+        <div class="hp-ui">
+            <div id="char-name" style="text-transform:uppercase; font-size:16px; color: var(--neon);"></div>
+            <div class="bar-bg"><div id="hp-fill"></div></div>
+            <div class="bar-bg"><div id="ult-fill"></div></div>
+        </div>
+    </div>
+
+    <canvas id="game"></canvas>
+
+<script>
+// CONFIGURACIÓN DEL SOCKET (ONLINE REAL)
+// Cuando tengas tu servidor en Render, cambia 'null' por la URL
+let socket = null; 
+try {
+    // socket = io("TU_URL_DE_RENDER_AQUI"); 
+} catch(e) { console.log("Modo Offline/Simulado"); }
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+window.onresize = resize; resize();
+
+const stars = Array.from({length: 100}, () => ({x: Math.random()*5000, y: Math.random()*5000}));
+
+const CHARS = {
+    piraman: { color: '#ff4500', speed: 5, hp: 100, range: 450, reload: 150, hitsToUlt: 10, scale: 1, dmg: 3.5 },
+    wachingo: { color: '#ffffff', speed: 8, hp: 120, range: 180, reload: 200, hitsToUlt: 9999, scale: 1, dmg: 35 },
+    explotin: { color: '#444444', speed: 3.8, hp: 280, range: 400, reload: 900, hitsToUlt: 7, scale: 1.3, dmg: 70 }
+};
+
+const BOT_NAMES = ["X-Ghost", "GamerPro", "Toxic_Piter", "CasinoKing", "Shadow", "Killer7", "BrawlGod", "Leon_777", "Shark_Vip"];
+let player = {
+    id: 'hero', nick: "PITER", char: "piraman", x: 2500, y: 2500, 
+    moveAng: 0, aimAng: 0, hp: 100, maxHp: 100,
+    coins: parseInt(localStorage.getItem('p_coins')) || 0,
+    unlocked: JSON.parse(localStorage.getItem('p_unl')) || ['piraman'],
+    kills: 0, lastShoot: 0, hits: 0, isCasting: false, isDashing: false, invulnerable: false,
+    lastSuperTime: 0, hurtTime: 0, lastDamageTime: 0, isAimingUlt: false, dead: false
+};
+
+let entities = [], projectiles = [], fxs = [], keys = {}, mouse = { x: 0, y: 0 }, isLive = false;
+
+function selectOrBuy(c, price) {
+    if(player.unlocked.includes(c)) {
+        player.char = c;
+        document.querySelectorAll('.card').forEach(el=>el.classList.remove('active'));
+        document.getElementById('sel-'+c).classList.add('active');
+    } else if(player.coins >= price) {
+        player.coins -= price; player.unlocked.push(c);
+        localStorage.setItem('p_coins', player.coins);
+        localStorage.setItem('p_unl', JSON.stringify(player.unlocked));
+        updateUI(); selectOrBuy(c, 0);
+    }
+}
+
+function updateUI() {
+    document.getElementById('m-coins').innerText = player.coins;
+    player.unlocked.forEach(u => {
+        let card = document.getElementById('sel-'+u);
+        if(card) { card.classList.remove('locked'); if(card.querySelector('.price-tag')) card.querySelector('.price-tag').style.display='none'; }
+    });
+}
+updateUI();
+
+function addChatMessage(user, msg) {
+    const box = document.getElementById('chat-box');
+    const entry = document.createElement('div');
+    entry.className = "chat-msg";
+    entry.innerHTML = `<span class="chat-user">${user}:</span> ${msg}`;
+    box.appendChild(entry);
+    if(box.childNodes.length > 8) box.removeChild(box.firstChild);
+}
+
+function spawnBot() {
+    if(!isLive) return;
+    // Solo spawneamos bots si hay pocos jugadores "reales" (simulado aquí)
+    if(entities.length >= 6) return;
+
+    const types = ['piraman', 'wachingo', 'explotin'];
+    const t = types[Math.floor(Math.random()*3)];
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 1200 + Math.random() * 500;
+    const newBot = {
+        id: "bot_" + Math.random(), nick: BOT_NAMES[Math.floor(Math.random()*BOT_NAMES.length)],
+        char: t, x: player.x + Math.cos(ang)*dist, y: player.y + Math.sin(ang)*dist,
+        hp: CHARS[t].hp, maxHp: CHARS[t].hp, moveAng: 0, aimAng: 0, lastShoot: 0, hurtTime: 0, kills: 0, lastDamageTime: 0
+    };
+    entities.push(newBot);
+    if(Math.random() > 0.85) addChatMessage("SERVER", `${newBot.nick} entró a la sala.`);
+}
+
+function createExplosion(x, y, ownerId) {
+    fxs.push({ x, y, type: 'boom', life: 30 });
+    for(let i=0; i<6; i++) fxs.push({ x: x+(Math.random()-0.5)*80, y: y+(Math.random()-0.5)*80, type: 'fire_ground', life: 120 });
+    
+    [player, ...entities].forEach(en => {
+        let dist = Math.hypot(x - en.x, y - en.y);
+        if(dist < 185 && en.id !== ownerId && en.hp > 0) { 
+            en.hp -= CHARS.explotin.dmg; 
+            en.hurtTime = 10;
+            en.lastDamageTime = Date.now();
+            if(ownerId === 'hero') player.hits++;
+            checkDead(en, ownerId);
+        }
+    });
+}
+
+function checkDead(en, ownerId) {
+    if(en.hp <= 0 && !en.dead) {
+        en.hp = 0;
+        en.dead = true;
+        let owner = [player, ...entities].find(e => e.id === ownerId);
+        if(owner) owner.kills++;
+        
+        if(ownerId === 'hero' && en.id !== 'hero') { 
+            player.coins += 25; 
+            localStorage.setItem('p_coins', player.coins); 
+        }
+        
+        if(en.id === 'hero') {
+            document.getElementById('death-screen').style.display = 'flex';
+            document.getElementById('death-stats').innerText = `HAS ELIMINADO A ${player.kills} JUGADORES`;
+            // IMPORTANTE: El juego sigue corriendo de fondo (Online feel)
+            setTimeout(() => { location.reload(); }, 3500);
+        } else {
+            let idx = entities.indexOf(en);
+            if(idx !== -1) {
+                addChatMessage("SERVER", `${en.nick} fue desplumado.`);
+                entities.splice(idx, 1);
+            }
+        }
+    }
+}
+
+function fire(p, angle) {
+    if(p.isCasting || p.isDashing || p.hp <= 0) return;
+    const s = CHARS[p.char]; const now = Date.now();
+    if(now - p.lastShoot < s.reload) return;
+    p.lastShoot = now;
+
+    if(p.char === 'piraman') {
+        for(let i=0; i<3; i++) projectiles.push({ owner: p.id, x: p.x, y: p.y, vx: Math.cos(angle+(Math.random()-0.5)*0.2)*18, vy: Math.sin(angle+(Math.random()-0.5)*0.2)*18, life: 30, type: 'fire', color: '#ff4500', size: 8, dmg: s.dmg });
+    } else if(p.char === 'wachingo') {
+        projectiles.push({ owner: p.id, x: p.x, y: p.y, vx: Math.cos(angle)*22, vy: Math.sin(angle)*22, life: 10, type: 'slash', color: '#fff', size: 60, ang: angle, dmg: s.dmg });
+    } else if(p.char === 'explotin') {
+        projectiles.push({ owner: p.id, x: p.x, y: p.y, vx: Math.cos(angle)*14, vy: Math.sin(angle)*14, life: 35, type: 'bomb', color: '#333', size: 14 });
+    }
+    
+    if(socket && p.id === 'hero') socket.emit('fire', {x: p.x, y: p.y, ang: angle});
+}
+
+function activateSuper() {
+    if(player.hp <= 0) return;
+    const now = Date.now();
+    const canUse = player.char === 'wachingo' ? (now - player.lastSuperTime >= 5000) : (player.hits >= CHARS[player.char].hitsToUlt);
+    if(!canUse) return;
+
+    if(player.char === 'wachingo') {
+        player.lastSuperTime = now; player.isDashing = true; player.invulnerable = true;
+        let dashAng = player.aimAng; let c = 0;
+        let inv = setInterval(() => {
+            player.x += Math.cos(dashAng)*55; player.y += Math.sin(dashAng)*55;
+            projectiles.push({ owner: player.id, x: player.x, y: player.y, vx: Math.cos(dashAng+Math.PI/2)*1.2, vy: Math.sin(dashAng+Math.PI/2)*1.2, life: 150, type: 'bullet', color: '#fff', size: 5, dmg: 5 });
+            projectiles.push({ owner: player.id, x: player.x, y: player.y, vx: Math.cos(dashAng-Math.PI/2)*1.2, vy: Math.sin(dashAng-Math.PI/2)*1.2, life: 150, type: 'bullet', color: '#fff', size: 5, dmg: 5 });
+            fxs.push({ x: player.x, y: player.y, type: 'ghost', life: 10, ang: dashAng });
+            c++; if(c > 15 || player.hp <= 0) { player.isDashing = false; player.invulnerable = false; clearInterval(inv); }
+        }, 16);
+    } else {
+        player.hits = 0;
+        if(player.char === 'piraman') {
+            for(let i=0; i<30; i++) projectiles.push({ owner: player.id, x: player.x, y: player.y, vx: Math.cos(i)*15, vy: Math.sin(i)*15, life: 80, type: 'fire', color: '#00f2ff', size: 10, dmg: 8 });
+        } else if(player.char === 'explotin') {
+            player.isCasting = true; let c = 0;
+            let inv = setInterval(() => {
+                let bx = player.x + (Math.random()-0.5)*600; let by = player.y + (Math.random()-0.5)*600;
+                createExplosion(bx, by, player.id);
+                c++; if(c > 12 || player.hp <= 0) { player.isCasting = false; clearInterval(inv); }
+            }, 100);
+        }
+    }
+}
+
+function update() {
+    const now = Date.now();
+
+    [player, ...entities].forEach(en => {
+        if(en.hp > 0 && now - en.lastDamageTime > 3000 && en.hp < en.maxHp) {
+            let regenRate = en.char === 'explotin' ? 0.4 : 0.18;
+            en.hp += regenRate;
+            if(en.hp > en.maxHp) en.hp = en.maxHp;
+        }
+    });
+
+    document.getElementById('chat-box').style.display = keys['tab'] ? 'block' : 'none';
+
+    if(player.hp > 0 && !player.isCasting && !player.isDashing) {
+        let mx=0, my=0; if(keys['w']) my--; if(keys['s']) my++; if(keys['a']) mx--; if(keys['d']) mx++;
+        if(mx!==0 || my!==0) { 
+            player.x += mx*CHARS[player.char].speed; player.y += my*CHARS[player.char].speed; 
+            player.moveAng = Math.atan2(my, mx); 
+            if(socket) socket.emit('move', {x: player.x, y: player.y, ang: player.moveAng});
+        }
+    }
+    player.aimAng = Math.atan2(mouse.y - H/2, mouse.x - W/2);
+    spawnBot();
+
+    projectiles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life--;
+        if(p.type === 'fire') fxs.push({ x: p.x, y: p.y, life: 8, color: '#ff6600' });
+        
+        [player, ...entities].forEach(en => {
+            if(en.hp > 0 && en.id !== p.owner && Math.hypot(p.x-en.x, p.y-en.y) < 45) {
+                if(en.id === 'hero' && player.invulnerable) return;
+                en.lastDamageTime = Date.now();
+                if(p.type === 'bomb') { createExplosion(p.x, p.y, p.owner); projectiles.splice(i, 1); }
+                else {
+                    en.hp -= p.dmg; en.hurtTime = 10;
+                    if(p.owner==='hero') player.hits++;
+                    checkDead(en, p.owner);
+                    if(p.type==='slash') projectiles.splice(i, 1);
+                }
+            }
+        });
+        if(p.life <= 0) { if(p.type === 'bomb') createExplosion(p.x, p.y, p.owner); projectiles.splice(i, 1); }
+    });
+
+    fxs.forEach((f, i) => { f.life--; if(f.life <= 0) fxs.splice(i, 1); });
+
+    entities.forEach((b) => {
+        if(b.hp <= 0) return;
+        let targets = [player, ...entities.filter(e => e.id !== b.id && e.hp > 0)];
+        let aliveTargets = targets.filter(t => t.hp > 0);
+        if(aliveTargets.length === 0) return;
+
+        let target = aliveTargets.reduce((prev, curr) => Math.hypot(b.x-curr.x, b.y-curr.y) < Math.hypot(b.x-prev.x, b.y-prev.y) ? curr : prev);
+        let d = Math.hypot(target.x-b.x, target.y-b.y);
+        b.aimAng = Math.atan2(target.y-b.y, target.x-b.x);
+        
+        if(d > 220) { b.x += Math.cos(b.aimAng)*3.5; b.y += Math.sin(b.aimAng)*3.5; b.moveAng = b.aimAng; }
+        if(d < 500) fire(b, b.aimAng);
+        if(b.hurtTime > 0) b.hurtTime--;
+    });
+    if(player.hurtTime > 0) player.hurtTime--;
+
+    let prog = player.char === 'wachingo' ? Math.min(100, ((Date.now()-player.lastSuperTime)/5000)*100) : (player.hits/CHARS[player.char].hitsToUlt)*100;
+    document.getElementById('hp-fill').style.width = Math.max(0, (player.hp/player.maxHp*100)) + "%";
+    document.getElementById('ult-fill').style.width = prog + "%";
+    document.getElementById('coin-hud').innerText = "💰 " + player.coins;
+    
+    let list = [player, ...entities].sort((a,b) => b.kills - a.kills).slice(0, 5);
+    document.getElementById('lb-list').innerHTML = list.map((e, i) => `<div class="lb-entry ${e.id==='hero'?'lb-me':''}"><span>${i+1}. ${e.nick}</span> <span>${e.kills}</span></div>`).join('');
+}
+
+function draw() {
+    ctx.fillStyle = '#010103'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = "white";
+    stars.forEach(s => {
+        let sx = (s.x - player.x * 0.15) % W; if(sx < 0) sx += W;
+        let sy = (s.y - player.y * 0.15) % H; if(sy < 0) sy += H;
+        ctx.fillRect(sx, sy, 2, 2);
+    });
+
+    ctx.strokeStyle = "rgba(0, 242, 255, 0.05)";
+    let gridSize = 100; let oX = -player.x % gridSize, oY = -player.y % gridSize;
+    for (let x = oX; x < W; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = oY; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+    const cX = W/2-player.x, cY = H/2-player.y;
+
+    if(player.isAimingUlt && player.hp > 0) {
+        ctx.save(); ctx.translate(W/2, H/2); ctx.rotate(player.aimAng); ctx.strokeStyle = "cyan"; ctx.setLineDash([10, 5]);
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(400, 0); ctx.stroke(); ctx.restore();
+    }
+
+    fxs.forEach(f => {
+        if(f.type === 'boom') {
+            ctx.fillStyle = `rgba(255, 100, 0, ${f.life/30})`;
+            ctx.beginPath(); ctx.arc(f.x+cX, f.y+cY, (30-f.life)*9, 0, Math.PI*2); ctx.fill();
+        } else if(f.type === 'fire_ground') {
+            ctx.fillStyle = Math.random() > 0.5 ? "#ff4500" : "#ffae00";
+            ctx.globalAlpha = f.life/120;
+            ctx.beginPath(); ctx.arc(f.x+cX, f.y+cY, 12 + Math.sin(Date.now()*0.01)*6, 0, Math.PI*2); ctx.fill();
+            ctx.globalAlpha = 1;
+        } else {
+            ctx.fillStyle = f.color || "rgba(0, 242, 255, 0.3)";
+            ctx.fillRect(f.x+cX, f.y+cY, 4, 4);
+        }
+    });
+
+    projectiles.forEach(p => {
+        ctx.save(); ctx.translate(p.x+cX, p.y+cY);
+        if(p.type === 'slash') { ctx.rotate(p.ang); ctx.strokeStyle = "white"; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(0, 0, p.size, -Math.PI/4, Math.PI/4); ctx.stroke(); }
+        else { ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(0, 0, p.size, 0, Math.PI*2); ctx.fill(); }
+        ctx.restore();
+    });
+
+    [player, ...entities].forEach(e => {
+        if(e.hp <= 0) return;
+        ctx.save(); ctx.translate(e.x+cX, e.y+cY);
+        ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.fillText(e.nick, 0, -75);
+        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(-30, -65, 60, 8);
+        ctx.fillStyle = e.hurtTime > 0 ? "white" : (e.id==='hero'?'#00ff88':'#ff3300'); ctx.fillRect(-30, -65, (e.hp/e.maxHp)*60, 8);
+        
+        ctx.rotate(e.moveAng);
+        if(e.hurtTime > 0) ctx.translate((Math.random()-0.5)*10, (Math.random()-0.5)*10);
+        
+        ctx.fillStyle = e.hurtTime > 0 ? "white" : CHARS[e.char].color;
+        let scale = CHARS[e.char].scale || 1;
+        ctx.scale(scale, scale);
+
+        if(e.char === 'piraman') {
+            ctx.beginPath(); ctx.moveTo(25, 0); ctx.lineTo(-15, -20); ctx.lineTo(-15, 20); ctx.closePath(); ctx.fill();
+        } else if(e.char === 'wachingo') {
+            ctx.fillRect(-18,-18,36,36); ctx.fillStyle = "black"; ctx.fillRect(10, -10, 6, 6); ctx.fillRect(10, 4, 6, 6);
+        } else if(e.char === 'explotin') {
+            let s = 1 + Math.sin(Date.now()*0.015)*0.15; ctx.scale(s, s);
+            ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#111"; ctx.fillRect(5, -15, 8, 15);
+        }
+        ctx.restore();
+    });
+}
+
+function start() {
+    player.nick = document.getElementById('nick').value || "PITER";
+    player.hp = CHARS[player.char].hp; player.maxHp = player.hp;
+    player.kills = 0; player.hits = 0; player.dead = false;
+    document.getElementById('ui-overlay').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+    document.getElementById('char-name').innerText = player.nick;
+    isLive = true; 
+    addChatMessage("SYSTEM", `Conectado al servidor de PiterPan.`);
+    if(socket) socket.emit('join', {nick: player.nick, char: player.char});
+    loop();
+}
+
+window.onmousedown = e => { if(!isLive || player.hp <= 0) return; if(e.button===0) fire(player, player.aimAng); if(e.button===2) player.isAimingUlt=true; };
+window.onmouseup = e => { if(e.button===2 && player.isAimingUlt) { player.isAimingUlt=false; activateSuper(); } };
+window.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; };
+window.onkeydown = e => { keys[e.key.toLowerCase()] = true; if(e.key === "Tab") e.preventDefault(); };
+window.onkeyup = e => keys[e.key.toLowerCase()] = false;
+function loop() { 
+    update(); 
+    draw(); 
+    requestAnimationFrame(loop); 
+}
+</script>
+</body>
+</html>
