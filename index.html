@@ -82,7 +82,7 @@
 // Cuando tengas tu servidor en Render, cambia 'null' por la URL
 let socket = null; 
 try {
-    // socket = io("TU_URL_DE_RENDER_AQUI"); 
+     socket = io("https://piterpan-online.onrender.com"); 
 } catch(e) { console.log("Modo Offline/Simulado"); }
 
 const canvas = document.getElementById('game');
@@ -417,4 +417,5 @@ function loop() {
 }
 </script>
 </body>
+
 </html>
